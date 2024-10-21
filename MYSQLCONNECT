@@ -1,0 +1,256 @@
+Step 1: Install Required Packages
+
+    Install MySQL Connector: Open your terminal and run:
+
+    bash:
+
+pip install mysql-connector-python
+
+Install Tkinter: Tkinter usually comes pre-installed with Python, but if you're using Ubuntu, you might need to install it separately:
+
+bash:
+
+    sudo apt-get install python3-tk
+
+Step 2: Set Up MySQL Database
+
+Log into MySQL: Open your terminal and log into the MySQL server:
+
+bash:
+
+mysql -u root -p
+
+Create a New User: Run the following commands to create a new user:
+
+sql:
+
+CREATE USER 'newuser'@'localhost' IDENTIFIED BY 'admin2023';
+
+Create the Database: Create the database for the appointment management system:
+
+sql:
+
+CREATE DATABASE doctor_appointments;
+
+Grant Privileges: Give the new user the necessary privileges on the database:
+
+sql:
+
+    GRANT ALL PRIVILEGES ON doctor_appointments.* TO 'newuser'@'localhost';
+    FLUSH PRIVILEGES;
+
+Step 3: Python Code for Doctor Appointment Management System
+
+Copy the following code into a file named doctor_appointments.py:
+
+python
+
+import mysql.connector as con
+from tkinter import *
+from tkinter import messagebox
+from tkinter import ttk  
+import datetime
+
+def create_database():
+    try:
+        temp_con = con.connect(host="localhost", user="newuser", passwd="admin2023", port=3306)
+        temp_cursor = temp_con.cursor()
+        temp_cursor.execute("CREATE DATABASE IF NOT EXISTS doctor_appointments")
+        temp_con.close()
+    except Exception as e:
+        print(f"Error creating database: {e}")
+
+def connect_to_database():
+    try:
+        mycon = con.connect(
+            host="localhost",
+            user="newuser",
+            passwd="admin2023",
+            database="doctor_appointments"
+        )
+        return mycon
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+        return None
+
+def create_tables(cursor):
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Patients (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        name VARCHAR(255),
+                        phone_number VARCHAR(20),
+                        email VARCHAR(255))''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Doctors (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        name VARCHAR(255),
+                        specialization VARCHAR(255),
+                        phone_number VARCHAR(20))''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS Appointments (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        patient_id INT,
+                        doctor_id INT,
+                        appointment_date DATE,
+                        time_slot TIME,
+                        status VARCHAR(10),
+                        FOREIGN KEY (patient_id) REFERENCES Patients(id),
+                        FOREIGN KEY (doctor_id) REFERENCES Doctors(id))''')
+
+def create_patient(cursor, name, phone, email):
+    try:
+        cursor.execute("INSERT INTO Patients (name, phone_number, email) VALUES (%s, %s, %s)", (name, phone, email))
+        mycon.commit()
+        messagebox.showinfo("Success", "Patient added successfully!")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to add patient: {e}")
+
+def view_patients(cursor):
+    try:
+        cursor.execute("SELECT * FROM Patients")
+        patients = cursor.fetchall()
+        display_text = "Patient Records:\n\n"
+        for patient in patients:
+            display_text += f"ID: {patient[0]} | Name: {patient[1]} | Phone: {patient[2]} | Email: {patient[3]}\n"
+        messagebox.showinfo("Patients", display_text)
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to fetch patients: {e}")
+
+def update_patient(cursor, patient_id, name, phone, email):
+    try:
+        cursor.execute("UPDATE Patients SET name=%s, phone_number=%s, email=%s WHERE id=%s", (name, phone, email, patient_id))
+        mycon.commit()
+        messagebox.showinfo("Success", "Patient updated successfully!")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to update patient: {e}")
+
+def delete_patient(cursor, patient_id):
+    try:
+        cursor.execute("DELETE FROM Patients WHERE id=%s", (patient_id,))
+        mycon.commit()
+        messagebox.showinfo("Success", "Patient deleted successfully!")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to delete patient: {e}")
+
+def book_appointment(mycon, cursor, patient_name, patient_phone, patient_email, doctor_name, appointment_date, time_slot):
+    try:
+        cursor.execute("INSERT INTO Patients (name, phone_number, email) VALUES (%s, %s, %s)",
+                       (patient_name, patient_phone, patient_email))
+        patient_id = cursor.lastrowid
+
+        cursor.execute("SELECT id FROM Doctors WHERE name=%s", (doctor_name,))
+        doctor = cursor.fetchone()
+        
+        if doctor:
+            doctor_id = doctor[0]
+        else:
+            cursor.execute("INSERT INTO Doctors (name, specialization, phone_number) VALUES (%s, %s, %s)",
+                           (doctor_name, "General", "0000"))
+            doctor_id = cursor.lastrowid
+
+        cursor.execute("INSERT INTO Appointments (patient_id, doctor_id, appointment_date, time_slot, status) VALUES (%s, %s, %s, %s, %s)",
+                       (patient_id, doctor_id, appointment_date, time_slot, "Booked"))
+        mycon.commit()
+        messagebox.showinfo("Success", "Appointment booked successfully!")
+    except Exception as e:
+        print(f"Error booking appointment: {e}")
+        mycon.rollback()
+
+def show_available_slots(mycon, cursor, patient_name, patient_phone, patient_email, doctor_name, appointment_date):
+    root = Toplevel()
+    root.title(f"Available Slots for Dr. {doctor_name} on {appointment_date}")
+    root.geometry("350x350")
+    
+    available_slots = ['09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00']
+    
+    cursor.execute("SELECT time_slot FROM Appointments WHERE doctor_id IN (SELECT id FROM Doctors WHERE name=%s) AND appointment_date=%s",
+                   (doctor_name, appointment_date))
+    booked_slots = [str(slot[0]) for slot in cursor.fetchall()]
+
+    Label(root, text="Available Slots", font=('Helvetica', 14, 'bold')).pack(pady=10)
+
+    slots_frame = Frame(root)
+    slots_frame.pack(pady=10)
+
+    for slot in available_slots:
+        if slot in booked_slots:
+            Button(slots_frame, text=slot, width=10, bg="red", fg="white", state=DISABLED).pack(side=LEFT, padx=5, pady=5)
+        else:
+            Button(slots_frame, text=slot, width=10, bg="green", fg="white",
+                   command=lambda s=slot: select_slot(s, mycon, cursor, patient_name, patient_phone, patient_email, doctor_name, appointment_date)).pack(side=LEFT, padx=5, pady=5)
+    
+    root.mainloop()
+
+def select_slot(slot, mycon, cursor, patient_name, patient_phone, patient_email, doctor_name, appointment_date):
+    book_appointment(mycon, cursor, patient_name, patient_phone, patient_email, doctor_name, appointment_date, slot)
+
+def start_app(mycon, cursor):
+    root = Tk()
+    root.title("Doctor Appointment Management System")
+    root.geometry("500x600")
+
+    notebook = ttk.Notebook(root)
+    notebook.pack(expand=1, fill='both')
+
+    add_patient_frame = Frame(notebook)
+    notebook.add(add_patient_frame, text='Add Patient')
+
+    Label(add_patient_frame, text="Add New Patient", font=("Helvetica", 14, "bold")).pack(pady=10)
+    patient_name = add_labeled_entry(add_patient_frame, "Patient Name:")
+    patient_phone = add_labeled_entry(add_patient_frame, "Phone Number:")
+    patient_email = add_labeled_entry(add_patient_frame, "Email:")
+    Button(add_patient_frame, text="Add Patient", command=lambda: create_patient(cursor, patient_name.get(), patient_phone.get(), patient_email.get())).pack(pady=10)
+
+    view_patients_frame = Frame(notebook)
+    notebook.add(view_patients_frame, text='View Patients')
+
+    Button(view_patients_frame, text="View All Patients", command=lambda: view_patients(cursor)).pack(pady=10)
+
+    update_patient_frame = Frame(notebook)
+    notebook.add(update_patient_frame, text='Update Patient')
+
+    Label(update_patient_frame, text="Update Patient", font=("Helvetica", 14, "bold")).pack(pady=10)
+    patient_id = add_labeled_entry(update_patient_frame, "Patient ID:")
+    new_name = add_labeled_entry(update_patient_frame, "New Name:")
+    new_phone = add_labeled_entry(update_patient_frame, "New Phone Number:")
+    new_email = add_labeled_entry(update_patient_frame, "New Email:")
+    Button(update_patient_frame, text="Update Patient", command=lambda: update_patient(cursor, patient_id.get(), new_name.get(), new_phone.get(), new_email.get())).pack(pady=10)
+
+    delete_patient_frame = Frame(notebook)
+    notebook.add(delete_patient_frame, text='Delete Patient')
+
+    Label(delete_patient_frame, text="Delete Patient", font=("Helvetica", 14, "bold")).pack(pady=10)
+    delete_patient_id = add_labeled_entry(delete_patient_frame, "Patient ID to Delete:")
+    Button(delete_patient_frame, text="Delete Patient", command=lambda: delete_patient(cursor, delete_patient_id.get())).pack(pady=10)
+
+    # Book Appointment Tab
+    book_appointment_frame = Frame(notebook)
+    notebook.add(book_appointment_frame, text='Book Appointment')
+
+    Label(book_appointment_frame, text="Appointment Booking", font=("Helvetica", 14, "bold")).pack(pady=10)
+    doctor_name = add_labeled_entry(book_appointment_frame, "Doctor Name:")
+    appointment_date = add_labeled_entry(book_appointment_frame, "Appointment Date (YYYY-MM-DD):")
+    Button(book_appointment_frame, text="Check Available Slots", command=lambda: show_available_slots(mycon, cursor, patient_name.get(), patient_phone.get(), patient_email.get(), doctor_name.get(), appointment_date.get())).pack(pady=10)
+
+    root.mainloop()
+
+def add_labeled_entry(frame, label_text):
+    Label(frame, text=label_text).pack(pady=5)
+    entry = Entry(frame)
+    entry.pack(pady=5)
+    return entry
+
+# Initialize the database and tables
+create_database()
+mycon = connect_to_database()
+cursor = mycon.cursor()
+create_tables(cursor)
+
+start_app(mycon, cursor)
+
+Step 4: Run the Application
+
+Navigate to the directory where you saved the file and run:
+
+bash:
+
+python3 doctor_appointments.py
